@@ -9,6 +9,7 @@ struct Particle
     Vec2 pos;
     Vec2 acc;
     Vec2 old_pos;
+    float mass;
     bool fixed;                          
 
     void update(float dt);
@@ -39,6 +40,7 @@ struct Cloth
     int width, height;
     Vec2 size;
 
+    Cloth() {}
     Cloth(Vec2 start, Vec2 size, int w, int hs);
 
     void update(float dt);

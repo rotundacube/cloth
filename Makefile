@@ -5,7 +5,7 @@ SRCS := $(wildcard $(SRCDIR)/*.cc)
 OBJS := $(patsubst $(SRCDIR)/%.cc,$(OBJDIR)/%.o,$(SRCS))
 
 CXX := g++
-LINK_FLAGS += -lraylib -lopengl32 -lgdi32 -lwinmm
+LINK_FLAGS += -lmingw32 -lSDL2main -lSDL2 -lopengl32 -lglew32
 CXXFLAGS += -Og -g -Wall -Wextra
 
 $(BIN): $(OBJS)

@@ -22,8 +22,9 @@ Rope::Rope(Vec2 start, Vec2 end, int count) :
     {
         points[i] = {
             start,
-            {0, -29.81},
+            {0, -9.81},
             start,
+            1,
             false,
         };
         
@@ -75,7 +76,7 @@ Cloth::Cloth(Vec2 start, Vec2 s, int w, int h) :
         for (int j = 0; j < width; ++j)
         {
             Vec2 pos = start - row*float(i) + col*float(j);
-            points[j + height*i] = {pos, {0, -15.81}, pos, false}; 
+            points[j + width*i] = {pos, {0, -9.81}, pos, 1, false}; 
 
         }
     }
@@ -104,7 +105,6 @@ Cloth::Cloth(Vec2 start, Vec2 s, int w, int h) :
         }
     }
 
-    //for (int k = 0; k < 5; ++k)
     for (int j = 1; j <= width; ++j)
     {
         for (int i = j; i < width; ++i)
@@ -116,7 +116,12 @@ Cloth::Cloth(Vec2 start, Vec2 s, int w, int h) :
             });
         }
     }
-
+    
+    for (int i = 0; i < width; ++i)
+    {
+        points[i].mass = 100.0f;
+    }
+    
     points[0].fixed = true;
     points[width - 1].fixed = true;
 }
@@ -133,15 +138,6 @@ void Cloth::update(float dt)
         for (auto &c : constraints)
         {
             c.apply();
-        }
-
-
-        {
-            points[0].fixed = false;
-            points[width - 1].fixed = false;
-            Constraint{&points[0], &points[width - 1], 0, 1.0f}.apply();
-            points[0].fixed = true;
-            points[width - 1].fixed = true;
         }
     }
 }
@@ -160,22 +156,28 @@ void Constraint::apply()
         error = dist - max_dist;
     }
 
-    // NOTE: both weights should sum to 1.
-    float a_weight = 0.5f;
-    float b_weight = 0.5f;
+    // NOTE: both weights should sum to 1 or 0(both are fixed).
+    float mass = a->mass + b->mass;
 
-    if (a->fixed)
+    float a_weight = 1 - a->mass/mass;
+    float b_weight = 1 - b->mass/mass;
+
+    if (a->fixed && b->fixed)
     {
         a_weight = 0;
-        b_weight *= 2;
+        b_weight = 0;
     }
-
-    if (b->fixed)
+    else if (a->fixed)
+    {
+        a_weight = 0;
+        b_weight = 1;
+    } 
+    else if (b->fixed)
     {
         b_weight = 0;
-        a_weight *= 2;
+        a_weight = 1;
     }
-
+    
     Vec2 delta = (a->pos - b->pos).normalize()*error;
     a->pos -= delta*a_weight;
     b->pos += delta*b_weight;
