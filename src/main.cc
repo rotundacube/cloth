@@ -1,31 +1,27 @@
+#ifdef EMSCRIPTEN
+#include <SDL.h>
+#include <SDL_opengles2.h>
+#include <emscripten.h>
+#else
 #define GLEW_STATIC
 #include <GL/glew.h>
-
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
+#endif
 
 #include "sim.hh"
+#include <stdlib.h>
 
-constexpr int G_WIDTH = 640;
-constexpr int G_HEIGHT = 640;
-constexpr float G_ASPECT = G_WIDTH/float(G_HEIGHT);
-
-static Vec2 point_to_screen(Vec2 p)
-{
-    return 
-        p.map({-G_ASPECT, -1}, 
-              {G_ASPECT, 1},
-              {0, G_HEIGHT}, 
-              {G_WIDTH, 0});
-}
+static int g_width;
+static int g_height;
+static Vec2 g_aspect;
 
 static Vec2 screen_to_point(Vec2 p)
 {
     return 
-        p.map({0, G_HEIGHT}, 
-              {G_WIDTH, 0},
-              {-G_ASPECT, -1}, 
-              {G_ASPECT, 1});
+        p.map({0, (float)g_height}, 
+              {(float)g_width, 0},
+              -g_aspect, g_aspect);
 }
 
 // NOTE: shaders should be simple enough to where no error detection is needed
@@ -62,7 +58,10 @@ static GLuint compile_shaders(char const *vs, char const *fs)
     glAttachShader(program, vertex);
     glAttachShader(program, fragment);
 
+#ifndef EMSCRIPTEN
     glBindFragDataLocation(program, 0, "fragColor");
+#endif
+
     glLinkProgram(program);
 
     glDeleteShader(vertex);
@@ -80,6 +79,7 @@ struct ClothRender
     GLuint shader;
     GLint uv_attrib;
     GLint pos_attrib;
+    GLint aspect_loc;
 
     struct Vertex
     {
@@ -94,8 +94,9 @@ struct ClothRender
     GLuint point_shader;
     GLint point_uv_attrib;
     GLint point_pos_attrib;
+    GLint point_aspect_loc;
     std::vector<Vertex> point_vertex_data;
-    static constexpr float POINT_RADIUS = 5;
+    static constexpr float POINT_RADIUS = 0.05;
     
     Vec2 mouse_delta = {};
     Particle *held = nullptr;
@@ -103,53 +104,78 @@ struct ClothRender
     ClothRender() :
         sim({-.75f, .75f}, {1.5f, 1.5f}, 50, 50)
     {
-        constexpr char sim_vs[] =  R"(
-#version 150
+
+#ifdef EMSCRIPTEN
+#define VS_PREFIX            \
+    "#define in attribute\n" \
+    "#define out varying\n"
+#define FS_PREFIX                      \
+    "#define in varying\n"             \
+    "#define fragColor gl_FragColor\n" \
+    "precision highp float;\n"
+#else
+#define VS_PREFIX "#version 150\n"
+#define FS_PREFIX    \
+    "#version 150\n" \
+    "out vec4 fragColor;\n"
+#endif
+
+        constexpr char sim_vs[] =
+VS_PREFIX
+R"(
 in vec2 uv;
 in vec2 pos;
 out vec2 tex;
+uniform vec2 aspect;
 void main()
 {
     tex = uv;
-    gl_Position = vec4(pos.xy, 0., 1.);
+    gl_Position = vec4(pos/aspect, 0., 1.);
 })";
 
-        constexpr char sim_fs[] =  R"(
-#version 150
+        constexpr char sim_fs[] =
+FS_PREFIX
+R"(
 in vec2 tex;
-out vec4 fragColor;
 void main()
 {
-    float c = smoothstep(.009, 0, length(tex-.5)-.5);
+    float c = smoothstep(.009, 0., length(tex-.5)-.5);
     fragColor = vec4(mix(vec3(.5), vec3(tex, 0.), c), 1.);
 })";
 
-        constexpr char point_vs[] =  R"(
-#version 150
+        constexpr char point_vs[] =
+VS_PREFIX
+R"(
 in vec2 uv;
 in vec2 pos;
 out vec2 tex;
+uniform vec2 aspect;
 void main()
 {
     tex = uv;
-    gl_Position = vec4(pos.xy, 0.0, 1.0);
+    gl_Position = vec4(pos/aspect, 0., 1.);
 })";
 
-        constexpr char point_fs[] =  R"(
-#version 150
+        constexpr char point_fs[] =
+FS_PREFIX
+R"(
 in vec2 tex;
-out vec4 fragColor;
 void main()
 {
-    float c = smoothstep(.009, 0, length(tex-.5)-.5);
-    fragColor = vec4(0, 0, c, c);
+    float c = smoothstep(.02, 0.01, length(tex-.5)-.5);
+    fragColor = vec4(0., 0., 1, c);
 })";
+
+#undef VS_PREFIX
+#undef FS_PREFIX
 
         shader = compile_shaders(sim_vs, sim_fs); 
 
+#ifndef EMSCRIPTEN
         GLuint sim_vao;
         glGenVertexArrays(1, &sim_vao);
         glBindVertexArray(sim_vao);
+#endif 
 
         glGenBuffers(1, &ebo);
         generate_indices();
@@ -159,20 +185,21 @@ void main()
 
         uv_attrib = glGetAttribLocation(shader, "uv");
         pos_attrib = glGetAttribLocation(shader, "pos");
+        aspect_loc = glGetUniformLocation(shader, "aspect");
 
         point_shader = compile_shaders(point_vs, point_fs);
 
+#ifndef EMSCRIPTEN
         GLuint point_vao;
         glGenVertexArrays(1, &point_vao);
         glBindVertexArray(point_vao);
+#endif
 
         glGenBuffers(1, &point_vbo);
 
-        point_uv_attrib =
-            glGetAttribLocation(point_shader, "uv");
-
-        point_pos_attrib =
-            glGetAttribLocation(point_shader, "pos");   
+        point_uv_attrib = glGetAttribLocation(point_shader, "uv");
+        point_pos_attrib = glGetAttribLocation(point_shader, "pos");
+        point_aspect_loc = glGetUniformLocation(point_shader, "aspect");
     }
 
     void generate_indices()
@@ -230,7 +257,7 @@ void main()
                      GL_DYNAMIC_DRAW);                
     }
 
-    void update(float dt)
+    void update_points()
     {
         point_vertex_data.clear();
 
@@ -240,15 +267,14 @@ void main()
         int x, y;
         Uint32 button = SDL_GetMouseState(&x, &y);
 
-        Vec2 real_mouse = {(float)x, (float)y};
-        Vec2 mouse = screen_to_point(real_mouse);    
+        Vec2 mouse = screen_to_point(Vec2{(float)x, (float)y});    
         for (auto &p : sim.points)
         {
             if (!p.fixed) continue;
 
             // add a quad to draw this point
             Vec2 q = p.pos;
-            float size = 2*POINT_RADIUS/(float)G_HEIGHT;
+            float size = POINT_RADIUS;
             point_vertex_data.insert(point_vertex_data.end(),
                                      {
                                         // upper right
@@ -262,8 +288,7 @@ void main()
                                         {{q.x + size, q.y - size}, {1, 0}},
                                      });
 
-            Vec2 s = point_to_screen(p.pos);
-            float d = s.dist(real_mouse);
+            float d = q.dist(mouse);
             if (d < POINT_RADIUS && 
                 (min_dist < 0 || d < min_dist))
             {
@@ -297,6 +322,11 @@ void main()
                      sizeof point_vertex_data[0],
                      point_vertex_data.data(), 
                      GL_DYNAMIC_DRAW);
+    }
+
+    void update(float dt)
+    {
+        update_points();
 
         constexpr float min_dt = 1/60.0f;
         sim_accumlator += fminf(dt, 0.25f);
@@ -309,6 +339,7 @@ void main()
         generate_vertices();
     }
 
+    // NOTE: webgl 1 doesn't have vao
     void draw()
     {
         glUseProgram(point_shader);
@@ -325,6 +356,7 @@ void main()
                               GL_FALSE, sizeof(Vertex), 
                               (void *)(offsetof(Vertex, xy)));
 
+        glUniform2f(point_aspect_loc, g_aspect.x, g_aspect.y);
         glDrawArrays(GL_TRIANGLES, 0, point_vertex_data.size());
 
         glUseProgram(shader);
@@ -341,11 +373,74 @@ void main()
                               GL_FALSE, sizeof(Vertex), 
                               (void *)(offsetof(Vertex, xy)));
         
+
+        glUniform2f(aspect_loc, g_aspect.x, g_aspect.y);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         glDrawElements(GL_TRIANGLES, 
                        index_data.size(),
                        GL_UNSIGNED_INT, 
                        nullptr);
+    }
+};
+
+struct LoopData
+{
+    Uint64 now;
+    Uint64 last;
+    Uint64 freq;
+
+    SDL_Window *window;
+    ClothRender simulation;
+
+    static void update_stub(void *self)
+    {
+        ((LoopData*)self)->update();
+    }
+
+    void update()
+    {
+        SDL_Event e;
+        while (SDL_PollEvent(&e) != 0)
+        {
+            if (e.type == SDL_QUIT)
+            {
+                exit(0);
+            }
+        }
+
+        int w, h;
+        SDL_GetWindowSize(window, &w, &h);
+        if (w != g_width || h != g_height)
+        {
+            g_width = w;
+            g_height = h;
+            glViewport(0, 0, w, h);
+
+            g_aspect = 
+                Vec2{(float)w, (float)h} / 
+                Vec2{(float)h, (float)w};
+            
+            if (w > h)
+            {
+                g_aspect.y = 1;
+            }
+
+            if (h > w)
+            {
+                g_aspect.x = 1;
+            }
+        }
+
+        last = now;
+        now = SDL_GetPerformanceCounter();
+        float frame_time = (float)(double(now - last)/double(freq));
+        simulation.update(frame_time);
+
+        glClear(GL_COLOR_BUFFER_BIT);
+        glClearColor(1, 1, 1, 1);
+        simulation.draw();
+        
+        SDL_GL_SwapWindow(window);
     }
 };
 
@@ -362,57 +457,56 @@ int main(int argc, char *argv[])
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
     
+#ifdef EMSCRIPTEN
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
 
     SDL_Window *window = 
         SDL_CreateWindow("", 
                          SDL_WINDOWPOS_UNDEFINED,
                          SDL_WINDOWPOS_UNDEFINED,
-                         G_WIDTH, G_HEIGHT, 
-                         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+                         640, 480, 
+                         SDL_WINDOW_OPENGL | 
+                         SDL_WINDOW_SHOWN  |
+                         SDL_WINDOW_RESIZABLE);
 
-    SDL_GL_CreateContext(window);
     SDL_GL_SetSwapInterval(0);
+    SDL_GL_CreateContext(window);
 
+#ifndef EMSCRIPTEN
     if (glewInit() != GLEW_OK)
     {
         return -1;
     }
+#endif
+
+    Uint64 last = 0;
+    Uint64 now = SDL_GetPerformanceCounter();
+    Uint64 freq = SDL_GetPerformanceFrequency();
+
+    LoopData loop_data = {};
+    loop_data.now = now;
+    loop_data.last = last;
+    loop_data.freq = freq;
+    loop_data.window = window;
 
     // enable alpha blending
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // setup cloth
-    ClothRender simulation;
-
-    Uint64 last = 0;
-    Uint64 now = SDL_GetPerformanceCounter();
-    Uint64 freq = SDL_GetPerformanceFrequency();
-    
+#ifndef EMSCRIPTEN
     for (;;)
     {
-        SDL_Event e;
-        if (SDL_PollEvent(&e) != 0)
-        {
-            if (e.type == SDL_QUIT) break;
-            continue;
-        }
-
-        last = now;
-        now = SDL_GetPerformanceCounter();
-        float frame_time = (float)(double(now - last)/double(freq));
-        
-        simulation.update(frame_time);
-
-        glClearColor(1, 1, 1, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
-        simulation.draw();
-        
-        SDL_GL_SwapWindow(window);
+        loop_data.update();
     }
+#else
+    emscripten_set_main_loop_arg(&LoopData::update_stub, &loop_data, 0, 1);
+#endif
 
     return 0;
 }
