@@ -40,8 +40,9 @@ struct Cloth
     int width, height;
     Vec2 size;
 
-    Cloth() {}
+    Cloth() = default;
     Cloth(Vec2 start, Vec2 size, int w, int hs);
+    Cloth &operator=(Cloth &&o);
 
     void update(float dt);
 };

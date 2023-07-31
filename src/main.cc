@@ -72,14 +72,15 @@ static GLuint compile_shaders(char const *vs, char const *fs)
 struct ClothRender
 {
     Cloth sim;
-    GLuint vbo;
-    GLuint ebo;
-    float sim_accumlator = 0;
+    GLuint sim_vbo;
+    GLuint sim_ebo;
+    GLuint sim_shader;
+    GLuint sim_texture;
 
-    GLuint shader;
-    GLint uv_attrib;
-    GLint pos_attrib;
-    GLint aspect_loc;
+    GLint sim_uv_attrib;
+    GLint sim_pos_attrib;
+    GLint sim_aspect_loc;
+    float sim_accumlator = 0;
 
     struct Vertex
     {
@@ -99,24 +100,26 @@ struct ClothRender
     static constexpr float POINT_RADIUS = 0.05;
     
     Vec2 mouse_delta = {};
-    Particle *held = nullptr;
+    Particle *held_particle = nullptr;
     
-    ClothRender() :
-        sim({-.75f, .75f}, {1.5f, 1.5f}, 50, 50)
+    ClothRender()
     {
 
 #ifdef EMSCRIPTEN
 #define VS_PREFIX            \
     "#define in attribute\n" \
     "#define out varying\n"
-#define FS_PREFIX                      \
-    "#define in varying\n"             \
-    "#define fragColor gl_FragColor\n" \
+#define FS_PREFIX                                       \
+    "#extension GL_OES_standard_derivatives : enable\n" \
+    "#define in varying\n"                              \
+    "#define fragColor gl_FragColor\n"                  \
     "precision highp float;\n"
 #else
-#define VS_PREFIX "#version 150\n"
-#define FS_PREFIX    \
-    "#version 150\n" \
+#define VS_PREFIX \
+    "#version 150\n"
+#define FS_PREFIX                 \
+    "#version 150\n"              \
+    "#define texture2D texture\n" \
     "out vec4 fragColor;\n"
 #endif
 
@@ -125,22 +128,22 @@ VS_PREFIX
 R"(
 in vec2 uv;
 in vec2 pos;
-out vec2 tex;
+out vec2 out_uv;
 uniform vec2 aspect;
 void main()
 {
-    tex = uv;
+    out_uv = uv;
     gl_Position = vec4(pos/aspect, 0., 1.);
 })";
 
         constexpr char sim_fs[] =
 FS_PREFIX
 R"(
-in vec2 tex;
+in vec2 out_uv;
+uniform sampler2D tex2d;
 void main()
 {
-    float c = smoothstep(.009, 0., length(tex-.5)-.5);
-    fragColor = vec4(mix(vec3(.5), vec3(tex, 0.), c), 1.);
+    fragColor = texture2D(tex2d, out_uv);
 })";
 
         constexpr char point_vs[] =
@@ -162,14 +165,15 @@ R"(
 in vec2 tex;
 void main()
 {
-    float c = smoothstep(.02, 0.01, length(tex-.5)-.5);
-    fragColor = vec4(0., 0., 1, c);
+    float s = min(dFdx(tex.x), dFdy(tex.y));
+    float c = smoothstep(s/2., 0., length(tex-.5)-.5);
+    fragColor = vec4(0, 0, 1, c);
 })";
 
 #undef VS_PREFIX
 #undef FS_PREFIX
 
-        shader = compile_shaders(sim_vs, sim_fs); 
+        sim_shader = compile_shaders(sim_vs, sim_fs); 
 
 #ifndef EMSCRIPTEN
         GLuint sim_vao;
@@ -177,15 +181,21 @@ void main()
         glBindVertexArray(sim_vao);
 #endif 
 
-        glGenBuffers(1, &ebo);
+        glGenBuffers(1, &sim_ebo);
+        glGenBuffers(1, &sim_vbo);
+
+        constexpr uint8_t image_data[4][4] = {
+            {0, 0, 0, 255}, {255, 0, 0, 255},
+            {0, 255, 0, 255}, {255, 255, 0, 255},
+        };
+
+        glGenTextures(1, &sim_texture);
+        update_texture_data(&image_data[0][0], 2, 2);
         generate_indices();
 
-        glGenBuffers(1, &vbo);
-        generate_vertices();
-
-        uv_attrib = glGetAttribLocation(shader, "uv");
-        pos_attrib = glGetAttribLocation(shader, "pos");
-        aspect_loc = glGetUniformLocation(shader, "aspect");
+        sim_uv_attrib = glGetAttribLocation(sim_shader, "uv");
+        sim_pos_attrib = glGetAttribLocation(sim_shader, "pos");
+        sim_aspect_loc = glGetUniformLocation(sim_shader, "aspect");
 
         point_shader = compile_shaders(point_vs, point_fs);
 
@@ -202,9 +212,26 @@ void main()
         point_aspect_loc = glGetUniformLocation(point_shader, "aspect");
     }
 
+    void update_texture_data(uint8_t const *data, 
+                             int width, int height)
+    {
+        glBindTexture(GL_TEXTURE_2D, sim_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+
+        float aspect = float(height)/float(width);
+        sim = Cloth({-.75f, .75f}, aspect*Vec2{1.5f, 1.5f}, 50, 50);
+        generate_vertices();
+    }
+
     void generate_indices()
     {
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sim_ebo);
         index_data.resize(6*(sim.width - 1)*(sim.height - 1));
         for (int i = 0; i < sim.height - 1; ++i)
         {
@@ -234,7 +261,7 @@ void main()
 
     void generate_vertices()
     {
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, sim_vbo);
         vertex_data.resize(sim.width*sim.height);
         for (int i = 0; i < sim.height; ++i)
         {
@@ -242,10 +269,8 @@ void main()
             {
                 int index = j + i*sim.width;
                 vertex_data[index] = {
-                    sim.points[index].pos.x,
-                    sim.points[index].pos.y,
-                    j/float(sim.width - 1), 
-                    1 - i/float(sim.height - 1),
+                    {sim.points[index].pos.x, sim.points[index].pos.y},
+                    {j/float(sim.width - 1), 1 - i/float(sim.height - 1)},
                 };
             }
         }
@@ -299,21 +324,22 @@ void main()
 
         if ((button & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0)
         {
-            if (nearest != nullptr && held == nullptr)
+            if (nearest != nullptr && held_particle == nullptr)
             {
-                held = nearest;
-                mouse_delta = held->pos - mouse;
+                held_particle = nearest;
+                mouse_delta = held_particle->pos - mouse;
             }
 
-            if (held != nullptr) 
+            if (held_particle != nullptr) 
             {
-                held->pos += 
-                    (mouse + mouse_delta - held->pos)*0.25f;
+                held_particle->pos += 
+                    (mouse + mouse_delta - 
+                     held_particle->pos)*0.25f;
             }
         }
         else
         {
-            held = nullptr;
+            held_particle = nullptr;
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, point_vbo);
@@ -359,23 +385,24 @@ void main()
         glUniform2f(point_aspect_loc, g_aspect.x, g_aspect.y);
         glDrawArrays(GL_TRIANGLES, 0, point_vertex_data.size());
 
-        glUseProgram(shader);
+        glUseProgram(sim_shader);
 
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glEnableVertexAttribArray(uv_attrib);
-        glEnableVertexAttribArray(pos_attrib);
+        glBindBuffer(GL_ARRAY_BUFFER, sim_vbo);
+        glEnableVertexAttribArray(sim_uv_attrib);
+        glEnableVertexAttribArray(sim_pos_attrib);
         
-        glVertexAttribPointer(uv_attrib, 2, GL_FLOAT, 
+        glVertexAttribPointer(sim_uv_attrib, 2, GL_FLOAT, 
                               GL_FALSE, sizeof(Vertex), 
                               (void *)(offsetof(Vertex, uv)));
         
-        glVertexAttribPointer(pos_attrib, 2, GL_FLOAT, 
+        glVertexAttribPointer(sim_pos_attrib, 2, GL_FLOAT, 
                               GL_FALSE, sizeof(Vertex), 
                               (void *)(offsetof(Vertex, xy)));
-        
 
-        glUniform2f(aspect_loc, g_aspect.x, g_aspect.y);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+        glBindTexture(GL_TEXTURE_2D, sim_texture);
+        glUniform2f(sim_aspect_loc, g_aspect.x, g_aspect.y);
+        
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sim_ebo);
         glDrawElements(GL_TRIANGLES, 
                        index_data.size(),
                        GL_UNSIGNED_INT, 
@@ -467,7 +494,7 @@ int main(int argc, char *argv[])
 #endif
 
     SDL_Window *window = 
-        SDL_CreateWindow("", 
+        SDL_CreateWindow("Cloth Simulation", 
                          SDL_WINDOWPOS_UNDEFINED,
                          SDL_WINDOWPOS_UNDEFINED,
                          640, 480, 

@@ -62,6 +62,16 @@ void Rope::update(float dt)
     }
 }
 
+Cloth &Cloth::operator=(Cloth &&o) 
+{
+    size = o.size;
+    width = o.width;
+    height = o.height;
+    points = std::move(o.points);
+    constraints = std::move(o.constraints);
+    return *this;
+}
+
 Cloth::Cloth(Vec2 start, Vec2 s, int w, int h) :
     points(w * h),
     width(w),
