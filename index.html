@@ -121,9 +121,11 @@
         urlButton.addEventListener("click", (event) => {
             uploadImageUrl(urlInput.value);
 
-            var urlParams = new URLSearchParams(window.location.search);
-            urlParams.set("img", urlInput.value);
-            history.replaceState(null, null, "?" + urlParams.toString());
+            if (urlInput.value.length !== 0) {
+                var urlParams = new URLSearchParams(window.location.search);
+                urlParams.set("img", urlInput.value);
+                history.replaceState(null, null, "?" + urlParams.toString());
+            }
         });
 
         // wait for wasm to finish loading
