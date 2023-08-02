@@ -125,6 +125,10 @@
                 var urlParams = new URLSearchParams(window.location.search);
                 urlParams.set("img", urlInput.value);
                 history.replaceState(null, null, "?" + urlParams.toString());
+            } else {
+                history.replaceState(null, null,
+                                     document.location.origin +
+                                     window.location.pathname);
             }
         });
 
