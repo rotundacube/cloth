@@ -1,7 +1,5 @@
 obj/
 data/
-site/index.js
-site/index.wasm
 
 *.exe
 *.obj
