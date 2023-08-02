@@ -6,6 +6,7 @@
 	<title>Cloth Simulation</title>	
 	<style>
 		html {
+			font-family: sans-serif;
 	  		box-sizing: border-box;
 	  		height: 100%;
 		}
@@ -26,39 +27,110 @@
 			width: 100%;
 		}
 
-		#canvas {
-			min-width: 0;
-			height: 100%;
-			flex-grow: 1;
-			display: block;
+		@media screen and (orientation: landscape) {
+			#canvas {
+				min-width: 0;
+				height: 100%;
+				flex-grow: 1;
+				display: block;
+			}
+
+			.ui {
+				display: flex;
+				flex-direction: column;
+				justify-content: flex-end;
+				margin-left: 1rem;
+			}
 		}
 
-		.ui {
-			display: flex;
-			margin-top: auto;
-			flex-direction: column;
+		@media screen and (orientation: portrait) {
+			.container {
+				flex-direction: column;
+			}
+
+			#canvas {
+				min-height: 0;
+				width: 100%;
+				flex-grow: 1;
+				display: block;
+			}
+
+			.ui {
+				display: flex;
+				margin-left: auto;
+				flex-direction: column;
+			}
 		}
 
-		#image  {
-			margin-bottom: 2em;
+		#file-input  {
+			margin-bottom: 2rem;
 		}
 	</style>
 </head>
-
 <body>
 	<div class="container">
 		<canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
 		<div class = "ui">
-			<label for="image"></label>
-			<input type="file" 
-				   id="image" 
-				   name="image"
-				   accept="image/png, image/jpg">
+			<label for="url-input"><h2>Load Url</h2></label>
+			<div>
+				<button id="url-button" type="button">Load</button>
+				<input id="url-input" type="url">
+			</div>
+			<h2>Load Image</h2>
+			<input type="file" id="file-input" accept="image/*">
 		</div>
 	</div>
 	<script type="text/javascript">
 		var Module = {
-			canvas: document.getElementById('canvas'),
+			canvas: document.getElementById("canvas"),
+		};
+
+		function uploadImageUrl(url) {
+			var image = new Image();
+			
+			image.crossOrigin = "";
+			image.src = url;
+			image.onload = () => {
+				var gl = Module.canvas.getContext("webgl");
+				var tex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+				Module.ccall('update_cloth_sim', null, 
+					 		 ['number', 'number'], 
+					 		 [image.width, image.height]);
+			};
+		}
+
+		var urlInput = document.getElementById("url-input");
+		var urlButton = document.getElementById("url-button");
+
+		document.getElementById("file-input").
+		addEventListener("change", (event) => {
+			const reader = new FileReader();
+			reader.onload = (event) => {
+				uploadImageUrl(event.target.result); 
+			};
+
+			reader.readAsDataURL(event.target.files[0]);
+
+			urlInput.value = "";
+			history.replaceState(null, null, null);
+		});
+
+		urlButton.addEventListener("click", (event) => {
+			uploadImageUrl(urlInput.value);
+
+			var urlParams = new URLSearchParams(window.location.search);
+			urlParams.set("img", urlInput.value);
+			history.replaceState(null, null, "?" + urlParams.toString());
+		});
+
+		// wait for wasm to finish loading
+		Module['onRuntimeInitialized'] = () => {
+			const urlParams = new URLSearchParams(window.location.search);
+			if (urlParams.has("img")) {
+				urlInput.value = urlParams.get("img");
+				urlButton.click();
+			}
 		};
 	</script>
 	<script async type="text/javascript" src="./index.js"></script>

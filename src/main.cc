@@ -80,6 +80,7 @@ struct ClothRender
     GLint sim_uv_attrib;
     GLint sim_pos_attrib;
     GLint sim_aspect_loc;
+    GLint sim_sampler_loc;
     float sim_accumlator = 0;
 
     struct Vertex
@@ -97,12 +98,13 @@ struct ClothRender
     GLint point_pos_attrib;
     GLint point_aspect_loc;
     std::vector<Vertex> point_vertex_data;
-    static constexpr float POINT_RADIUS = 0.05;
+    static constexpr float POINT_RADIUS = 0.02;
     
     Vec2 mouse_delta = {};
     Particle *held_particle = nullptr;
-    
-    ClothRender()
+    bool is_setup = false;
+
+    void setup()
     {
 
 #ifdef EMSCRIPTEN
@@ -165,7 +167,7 @@ R"(
 in vec2 tex;
 void main()
 {
-    float s = min(dFdx(tex.x), dFdy(tex.y));
+    float s = length(fwidth(tex));
     float c = smoothstep(s/2., 0., length(tex-.5)-.5);
     fragColor = vec4(0, 0, 1, c);
 })";
@@ -185,8 +187,8 @@ void main()
         glGenBuffers(1, &sim_vbo);
 
         constexpr uint8_t image_data[4][4] = {
-            {0, 0, 0, 255}, {255, 0, 0, 255},
             {0, 255, 0, 255}, {255, 255, 0, 255},
+            {0, 0, 0, 255}, {255, 0, 0, 255},
         };
 
         glGenTextures(1, &sim_texture);
@@ -196,7 +198,7 @@ void main()
         sim_uv_attrib = glGetAttribLocation(sim_shader, "uv");
         sim_pos_attrib = glGetAttribLocation(sim_shader, "pos");
         sim_aspect_loc = glGetUniformLocation(sim_shader, "aspect");
-
+        
         point_shader = compile_shaders(point_vs, point_fs);
 
 #ifndef EMSCRIPTEN
@@ -210,23 +212,30 @@ void main()
         point_uv_attrib = glGetAttribLocation(point_shader, "uv");
         point_pos_attrib = glGetAttribLocation(point_shader, "pos");
         point_aspect_loc = glGetUniformLocation(point_shader, "aspect");
+
+        is_setup = true;
+    }
+
+    void recreate_cloth(int width, int height)
+    {
+        float aspect = float(height)/float(width);
+        sim = Cloth({-.75f, .75f}, {1.5f, 1.5f*aspect}, 50, 50);
+        generate_vertices();
     }
 
     void update_texture_data(uint8_t const *data, 
                              int width, int height)
     {
+        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sim_texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 
                      0, GL_RGBA, GL_UNSIGNED_BYTE, data);
 
-        float aspect = float(height)/float(width);
-        sim = Cloth({-.75f, .75f}, aspect*Vec2{1.5f, 1.5f}, 50, 50);
-        generate_vertices();
+        recreate_cloth(width, height);
     }
 
     void generate_indices()
@@ -270,7 +279,7 @@ void main()
                 int index = j + i*sim.width;
                 vertex_data[index] = {
                     {sim.points[index].pos.x, sim.points[index].pos.y},
-                    {j/float(sim.width - 1), 1 - i/float(sim.height - 1)},
+                    {j/float(sim.width - 1), i/float(sim.height - 1)},
                 };
             }
         }
@@ -399,7 +408,6 @@ void main()
                               GL_FALSE, sizeof(Vertex), 
                               (void *)(offsetof(Vertex, xy)));
 
-        glBindTexture(GL_TEXTURE_2D, sim_texture);
         glUniform2f(sim_aspect_loc, g_aspect.x, g_aspect.y);
         
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sim_ebo);
@@ -463,13 +471,25 @@ struct LoopData
         float frame_time = (float)(double(now - last)/double(freq));
         simulation.update(frame_time);
 
+        glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
-        glClearColor(1, 1, 1, 1);
+
         simulation.draw();
         
         SDL_GL_SwapWindow(window);
     }
 };
+
+static LoopData loop_data;
+
+#ifdef EMSCRIPTEN
+EMSCRIPTEN_KEEPALIVE
+extern "C" void update_cloth_sim(int w, int h)
+{
+    if (!loop_data.simulation.is_setup) return;
+    loop_data.simulation.recreate_cloth(w, h);
+}
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -487,6 +507,9 @@ int main(int argc, char *argv[])
 #ifdef EMSCRIPTEN
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+
+    // make sure only keyboard events on canvas are captured.
+    SDL_SetHint(SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT, "#canvas");
 #else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -516,11 +539,11 @@ int main(int argc, char *argv[])
     Uint64 now = SDL_GetPerformanceCounter();
     Uint64 freq = SDL_GetPerformanceFrequency();
 
-    LoopData loop_data = {};
     loop_data.now = now;
     loop_data.last = last;
     loop_data.freq = freq;
     loop_data.window = window;
+    loop_data.simulation.setup();
 
     // enable alpha blending
     glEnable(GL_BLEND);
