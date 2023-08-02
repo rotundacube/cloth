@@ -113,7 +113,9 @@
 			reader.readAsDataURL(event.target.files[0]);
 
 			urlInput.value = "";
-			history.replaceState(null, null, null);
+			history.replaceState(null, null,
+								 document.location.origin +
+								 window.location.pathname);
 		});
 
 		urlButton.addEventListener("click", (event) => {

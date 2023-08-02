@@ -98,7 +98,7 @@ struct ClothRender
     GLint point_pos_attrib;
     GLint point_aspect_loc;
     std::vector<Vertex> point_vertex_data;
-    static constexpr float POINT_RADIUS = 0.02;
+    static constexpr float POINT_RADIUS = 0.025;
     
     Vec2 mouse_delta = {};
     Particle *held_particle = nullptr;
@@ -169,7 +169,7 @@ void main()
 {
     float s = length(fwidth(tex));
     float c = smoothstep(s/2., 0., length(tex-.5)-.5);
-    fragColor = vec4(0, 0, 1, c);
+    fragColor = vec4(1, 1, 1, c);
 })";
 
 #undef VS_PREFIX
@@ -535,14 +535,10 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    Uint64 last = 0;
-    Uint64 now = SDL_GetPerformanceCounter();
-    Uint64 freq = SDL_GetPerformanceFrequency();
-
-    loop_data.now = now;
-    loop_data.last = last;
-    loop_data.freq = freq;
+    loop_data.last = 0;
     loop_data.window = window;
+    loop_data.now = SDL_GetPerformanceCounter();
+    loop_data.freq = SDL_GetPerformanceFrequency();
     loop_data.simulation.setup();
 
     // enable alpha blending
