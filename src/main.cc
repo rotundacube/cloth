@@ -167,9 +167,10 @@ R"(
 in vec2 tex;
 void main()
 {
-    float s = length(fwidth(tex));
-    float c = smoothstep(s/2., 0., length(tex-.5)-.5);
-    fragColor = vec4(1, 1, 1, c);
+    float d = length(tex - .5) - .5;
+    float s = fwidth(d)*.5;
+    float c = smoothstep(s, -s, d);
+    fragColor = vec4(1, 0, 0, c);
 })";
 
 #undef VS_PREFIX
@@ -471,7 +472,7 @@ struct LoopData
         float frame_time = (float)(double(now - last)/double(freq));
         simulation.update(frame_time);
 
-        glClearColor(0, 0, 0, 1);
+        glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
 
         simulation.draw();
@@ -505,6 +506,13 @@ int main(int argc, char *argv[])
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
     
 #ifdef EMSCRIPTEN
+
+    // make background transparent
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 
