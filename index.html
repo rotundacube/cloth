@@ -95,8 +95,8 @@
                 var gl = Module.canvas.getContext("webgl");
                 var tex = gl.getParameter(gl.TEXTURE_BINDING_2D);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-                Module.ccall('update_cloth_sim', null, 
-                              ['number', 'number'], 
+                Module.ccall("update_cloth_sim", null, 
+                              ["number", "number"], 
                               [image.width, image.height]);
             };
         }
